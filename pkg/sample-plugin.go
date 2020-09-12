@@ -63,6 +63,8 @@ func (td *SampleDatasource) QueryData(ctx context.Context, req *backend.QueryDat
 
 type queryModel struct {
 	Format string `json:"format"`
+	QueryText string `json:"queryText"`
+	Host string `json:"host"`
 }
 
 func (td *SampleDatasource) query(ctx context.Context, query backend.DataQuery) backend.DataResponse {
@@ -75,7 +77,7 @@ func (td *SampleDatasource) query(ctx context.Context, query backend.DataQuery) 
 	if response.Error != nil {
 		return response
 	}
-
+    log.DefaultLogger.Info("Getting query information", "query", qm.QueryText, "host", qm.Host)
 	// Log a warning if `Format` is empty.
 	if qm.Format == "" {
 		log.DefaultLogger.Warn("format is empty. defaulting to time series")
