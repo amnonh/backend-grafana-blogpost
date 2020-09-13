@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math/rand"
-	"net/http"
+	"github.com/gocql/gocql"
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
@@ -49,9 +49,15 @@ func (td *SampleDatasource) QueryData(ctx context.Context, req *backend.QueryDat
 	// create response struct
 	response := backend.NewQueryDataResponse()
 
+    instance, err := td.im.Get(req.PluginContext)
+    if err != nil {
+        return nil, err
+    }
+    instSetting, _ := instance.(*instanceSettings)
+
 	// loop over queries and execute them individually.
 	for _, q := range req.Queries {
-		res := td.query(ctx, q)
+		res := td.query(ctx, q, instSetting)
 
 		// save the response in a hashmap
 		// based on with RefID as identifier
@@ -67,7 +73,7 @@ type queryModel struct {
 	Host string `json:"host"`
 }
 
-func (td *SampleDatasource) query(ctx context.Context, query backend.DataQuery) backend.DataResponse {
+func (td *SampleDatasource) query(ctx context.Context, query backend.DataQuery, instSetting *instanceSettings) backend.DataResponse {
 	// Unmarshal the json into our queryModel
 	var qm queryModel
 
@@ -122,12 +128,27 @@ func (td *SampleDatasource) CheckHealth(ctx context.Context, req *backend.CheckH
 }
 
 type instanceSettings struct {
-	httpClient *http.Client
+	cluster *gocql.ClusterConfig
+	session *gocql.Session
 }
 
 func newDataSourceInstance(setting backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
+    type editModel struct {
+        Host string `json:"host"`
+    }
+    var hosts editModel
+    err := json.Unmarshal(setting.JSONData, &hosts)
+    if err != nil {
+        log.DefaultLogger.Warn("error marshalling", "err", err)
+        return nil, err
+    }
+    log.DefaultLogger.Info("looking for host", "host", hosts.Host)
+    var newCluster *gocql.ClusterConfig = nil
+    newCluster = gocql.NewCluster(hosts.Host)
+    session, _ := gocql.NewSession(*newCluster)
 	return &instanceSettings{
-		httpClient: &http.Client{},
+		cluster: newCluster,
+		session: session,
 	}, nil
 }
 
