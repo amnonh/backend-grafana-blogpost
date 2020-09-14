@@ -208,9 +208,23 @@ func newDataSourceInstance(setting backend.DataSourceInstanceSettings) (instance
         log.DefaultLogger.Warn("error marshalling", "err", err)
         return nil, err
     }
+    var secureData = setting.DecryptedSecureJSONData
+    password, hasPassword := secureData["password"]
+    user, hasUser := secureData["user"]
+    var authenticator *gocql.PasswordAuthenticator = nil
+    if hasPassword && hasUser {
+        log.DefaultLogger.Info("Adding authenticator for user", "user", user)
+        authenticator = &gocql.PasswordAuthenticator{
+            Username: user,
+            Password: password,
+        }
+    }
     log.DefaultLogger.Info("looking for host", "host", hosts.Host)
     var newCluster *gocql.ClusterConfig = nil
     newCluster = gocql.NewCluster(hosts.Host)
+    if authenticator != nil {
+        newCluster.Authenticator = *authenticator
+    }
     session, _ := gocql.NewSession(*newCluster)
 	return &instanceSettings{
 		cluster: newCluster,
