@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"math/rand"
 	"github.com/gocql/gocql"
+    "math/big"
+    "gopkg.in/inf.v0"
+    "strconv"
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
@@ -66,6 +69,57 @@ func (td *SampleDatasource) QueryData(ctx context.Context, req *backend.QueryDat
 
 	return response, nil
 }
+func getTypeArray(typ string) interface{} {
+    log.DefaultLogger.Debug("getTypeArray", "type", typ)
+    switch t := typ; t {
+        case "timestamp":
+            return []time.Time{}
+        case "bigint", "int":
+            return []int64{}
+        case "smallint":
+            return []int16{}
+        case "boolean":
+            return []bool{}
+        case "double", "varint", "decimal":
+            return []float64{}
+        case "float":
+            return []float32{}
+        case "tinyint":
+            return []int8{}
+        default:
+            return []string{}
+    }
+}
+
+func toValue(val interface{}, typ string) interface{} {
+    if (val == nil) {
+        return nil
+    }
+    switch t := val.(type) {
+        case float32, time.Time, string, int64, float64, bool, int16, int8:
+            return t
+        case gocql.UUID:
+            return t.String()
+        case int:
+            return int64(t)
+        case *inf.Dec:
+            if s, err := strconv.ParseFloat(t.String(), 64); err == nil {
+                return s
+            }
+            return 0
+        case *big.Int:
+            if s, err := strconv.ParseFloat(t.String(), 64); err == nil {
+                return s
+            }
+            return 0
+        default:
+            r, err := json.Marshal(val)
+            if (err != nil) {
+                log.DefaultLogger.Info("Marshalling failed ", "err", err)
+            }
+            return string(r)
+    }
+}
 
 type queryModel struct {
 	Format string `json:"format"`
@@ -91,17 +145,29 @@ func (td *SampleDatasource) query(ctx context.Context, query backend.DataQuery, 
 
 	// create data frame response
 	frame := data.NewFrame("response")
+    iter := instSetting.session.Query(qm.QueryText).Iter()
 
-	// add the time dimension
-	frame.Fields = append(frame.Fields,
-		data.NewField("time", nil, []time.Time{query.TimeRange.From, query.TimeRange.To}),
-	)
-
-	// add values
-	frame.Fields = append(frame.Fields,
-		data.NewField("values", nil, []int64{10, 20}),
-	)
-
+    for _, c := range iter.Columns() {
+        log.DefaultLogger.Info("Adding Column", "name", c.Name, "type", c.TypeInfo.Type().String())
+        frame.Fields = append(frame.Fields,
+            data.NewField(c.Name, nil, getTypeArray(c.TypeInfo.Type().String())),
+        )
+    }
+    for {
+        // New map each iteration
+        row := make(map[string]interface{})
+        if !iter.MapScan(row) {
+            break
+        }
+        vals := make([]interface{}, len(iter.Columns()))
+        for i, c := range iter.Columns() {
+            vals[i] = toValue(row[c.Name], c.TypeInfo.Type().String())
+        }
+        frame.AppendRow(vals...)
+    }
+    if err := iter.Close(); err != nil {
+        log.DefaultLogger.Warn(err.Error())
+    }
 	// add the frames to the response
 	response.Frames = append(response.Frames, frame)
 
